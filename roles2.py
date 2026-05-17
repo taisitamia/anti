@@ -1,6 +1,6 @@
 """
 Bot de Discord — versión 3
-Prefijo: , (coma) — igual que Greed
+Prefijo: ! — igual que Greed
 Slash commands sincronizados automáticamente al iniciar.
 """
 
@@ -45,7 +45,7 @@ FAMILIA_FILE  = 'familia.json'
 CUMPLE_FILE   = 'cumpleanos.json'
 SNAP_FILE     = 'server_snapshot.json'   # snapshots de canales/categorías
 
-PREFIX = ','
+PREFIX = '!'
 
 
 def cargar_config() -> dict:
@@ -1875,23 +1875,69 @@ async def roles_usuario(ctx, member: discord.Member = None):
     await ctx.send(embed=embed)
 
 
+class RolesView(discord.ui.View):
+    def __init__(self, author_id: int, pages: list[discord.Embed]):
+        super().__init__(timeout=120)
+        self.author_id = author_id
+        self.pages     = pages
+        self.current   = 0
+
+    async def _guard(self, i: discord.Interaction) -> bool:
+        if i.user.id != self.author_id:
+            await i.response.send_message('❌ No es tu menú.', ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(emoji='◀️', style=discord.ButtonStyle.secondary)
+    async def btn_prev(self, i: discord.Interaction, _):
+        if not await self._guard(i):
+            return
+        self.current = (self.current - 1) % len(self.pages)
+        await i.response.edit_message(embed=self.pages[self.current], view=self)
+
+    @discord.ui.button(emoji='▶️', style=discord.ButtonStyle.secondary)
+    async def btn_next(self, i: discord.Interaction, _):
+        if not await self._guard(i):
+            return
+        self.current = (self.current + 1) % len(self.pages)
+        await i.response.edit_message(embed=self.pages[self.current], view=self)
+
+    @discord.ui.button(emoji='❌', style=discord.ButtonStyle.danger)
+    async def btn_close(self, i: discord.Interaction, _):
+        if not await self._guard(i):
+            return
+        await i.message.delete()
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
 @bot.command(name='listar_roles', aliases=['lroles', 'roles'])
 async def listar_roles(ctx):
     roles = [r for r in reversed(ctx.guild.roles) if r != ctx.guild.default_role]
     if not roles:
         return await ctx.send('❌ Sin roles.')
-    paginas, chunk = [], ''
-    for r in roles:
-        linea = f'{r.mention} — `{r.id}` — {len(r.members)} miembros\n'
-        if len(chunk) + len(linea) > 900:
-            paginas.append(chunk)
-            chunk = ''
-        chunk += linea
-    if chunk:
-        paginas.append(chunk)
-    for i, p in enumerate(paginas, 1):
-        embed = discord.Embed(title=f'🎭 Roles ({i}/{len(paginas)})', description=p, color=0x5865F2)
-        await ctx.send(embed=embed)
+
+    ENTRIES_PER_PAGE = 10
+    total   = len(roles)
+    chunks  = [roles[i:i + ENTRIES_PER_PAGE] for i in range(0, total, ENTRIES_PER_PAGE)]
+    n_pages = len(chunks)
+    paginas = []
+
+    for idx, chunk in enumerate(chunks, 1):
+        desc = '\n'.join(f'{r.mention} ({r.id})' for r in chunk)
+        embed = discord.Embed(
+            title='Roles',
+            description=desc,
+            color=0x5865F2,
+        )
+        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon.url if ctx.guild.icon else discord.Embed.Empty)
+        embed.set_footer(text=f'Page {idx}/{n_pages} ({total} entries)')
+        paginas.append(embed)
+
+    view = RolesView(ctx.author.id, paginas)
+    await ctx.send(embed=paginas[0], view=view)
 
 
 @bot.command(name='nick', aliases=['apodo'])
@@ -2109,8 +2155,8 @@ async def dar_acceso(ctx, member: discord.Member):
         roles_a_quitar = [r] if r and r in member.roles else []
     try:
         if roles_a_quitar:
-            await member.remove_roles(*roles_a_quitar, reason=f',v — {ctx.author}')
-        await member.add_roles(rol_dar, reason=f',v — acceso por {ctx.author}')
+            await member.remove_roles(*roles_a_quitar, reason=f'!v — {ctx.author}')
+        await member.add_roles(rol_dar, reason=f'!v — acceso por {ctx.author}')
     except discord.Forbidden:
         return await ctx.send('❌ Sin permisos suficientes.')
     embed_ok = discord.Embed(title='✅ Acceso Concedido', color=0x00FF00)
